@@ -13,10 +13,10 @@ const FIREBASE_STATUS = FIREBASE_HOST + "/device_status.json";
 
 // Device names matching Firebase DB: devices/{cooler,fan,Light,speaker}/state
 const FIREBASE_DEVICES_LIST = [
-  { key: "cooler",  label: "Cooler",  icon: "❄️", activeWatts: 200, standbyWatts: 5,   activeHours: 8 },
+  { key: "cooler",  label: "AC",      icon: "❄️", activeWatts: 200, standbyWatts: 5,   activeHours: 8 },
   { key: "fan",     label: "Fan",     icon: "💨", activeWatts: 75,  standbyWatts: 1,   activeHours: 10 },
   { key: "light",   label: "Light",   icon: "💡", activeWatts: 60,  standbyWatts: 0.5, activeHours: 6 },
-  { key: "speaker", label: "Speaker", icon: "🔊", activeWatts: 30,  standbyWatts: 2,   activeHours: 3 },
+  { key: "speaker", label: "TV",      icon: "📺", activeWatts: 30,  standbyWatts: 2,   activeHours: 3 },
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -67,6 +67,7 @@ let nextId = 1;
 let killSwitchActive = false;
 let esp32Connected = false;
 let firebasePolling = null;
+let liveDeviceStates = {}; // { cooler: "ON", fan: "OFF", ... }
 
 // ═══════════════════════════════════════════════════════════════
 //  DOM REFS
@@ -130,8 +131,16 @@ function fetchFirebaseDevices() {
         showToast('🔥 Firebase connected! Device states synced.', 'success', 3000);
         renderBadges();
       }
+      // Track live states
+      FIREBASE_DEVICES_LIST.forEach(dev => {
+        if (data[dev.key]) liveDeviceStates[dev.key] = data[dev.key].state || 'OFF';
+      });
       updateESP32StatusUI(true);
       updateDeviceCards(data);
+      renderApplianceList();
+      recalcAll();
+      updateEnergyComparison();
+      updateBreakdownTable();
     })
     .catch(() => {
       if (esp32Connected) {
@@ -306,6 +315,7 @@ function bindEvents() {
 
   $('#btn-optimize').addEventListener('click', runOptimize);
   $('#btn-run-optimize').addEventListener('click', runOptimize);
+  $('#btn-roam').addEventListener('click', roamMode);
   $('#btn-export').addEventListener('click', exportPDF);
   $('#btn-reset').addEventListener('click', resetAll);
   killSwitchBtn.addEventListener('click', toggleKillSwitch);
@@ -315,11 +325,42 @@ function bindEvents() {
 //  RENDER APPLIANCE LIST
 // ═══════════════════════════════════════════════════════════════
 function renderApplianceList() {
-  if (appliances.length === 0) { emptyState.style.display = ''; Array.from(applianceList.children).forEach(c => { if (c !== emptyState) c.remove(); }); return; }
   emptyState.style.display = 'none';
   Array.from(applianceList.children).forEach(c => { if (c !== emptyState) c.remove(); });
 
   const rate = getRate(), sHrs = getStandbyHours();
+  let hasItems = false;
+
+  // ── LIVE FIREBASE DEVICES (always shown at top) ──
+  if (esp32Connected && Object.keys(liveDeviceStates).length > 0) {
+    FIREBASE_DEVICES_LIST.forEach(dev => {
+      const state = liveDeviceStates[dev.key] || 'OFF';
+      const isOn = state === 'ON';
+      const nDaily = (dev.activeWatts * (isOn ? dev.activeHours : 0)) / 1000;
+      const pDaily = (!isOn ? dev.standbyWatts * sHrs : 0) / 1000;
+      const totalMo = (nDaily + pDaily) * 30 * rate;
+
+      const div = document.createElement('div');
+      div.className = 'appliance-item' + (!isOn ? ' phantom-alert' : '') + ' live-device';
+      div.innerHTML = `
+        <div class="appliance-icon">${dev.icon}</div>
+        <div class="appliance-info">
+          <div class="appliance-name">${dev.label} <span class="live-tag">🔴 LIVE</span></div>
+          <div class="appliance-meta">
+            <span>${dev.activeWatts}W active</span><span>${dev.standbyWatts}W standby</span>
+            <span style="color:${isOn ? 'var(--accent-green)' : 'var(--accent-red)'}; font-weight:700;">${isOn ? '⚡ ON' : '🔌 OFF'}</span>
+          </div>
+        </div>
+        <div class="appliance-cost">₹${formatINR(totalMo)}/mo</div>
+        <div class="appliance-actions">
+          <label class="status-toggle"><input type="checkbox" ${isOn ? 'checked' : ''} onchange="toggleDevice('${dev.key}', this.checked)"><span class="slider"></span></label>
+        </div>`;
+      applianceList.insertBefore(div, emptyState);
+      hasItems = true;
+    });
+  }
+
+  // ── MANUALLY ADDED APPLIANCES ──
   appliances.forEach(a => {
     const pDaily = (a.standbyWatts * a.qty * sHrs) / 1000;
     const nDaily = (a.activeWatts * a.qty * a.activeHours) / 1000;
@@ -344,8 +385,12 @@ function renderApplianceList() {
         <button class="btn-icon" onclick="removeAppliance(${a.id})">✕</button>
       </div>`;
     applianceList.insertBefore(div, emptyState);
+    hasItems = true;
   });
-  $('#badge-count').textContent = `${appliances.reduce((s, a) => s + a.qty, 0)} devices`;
+
+  if (!hasItems) emptyState.style.display = '';
+  const totalDevices = appliances.reduce((s, a) => s + a.qty, 0) + (esp32Connected ? FIREBASE_DEVICES_LIST.length : 0);
+  $('#badge-count').textContent = `${totalDevices} devices`;
 }
 
 function changeQty(id, d) { const a = appliances.find(x => x.id === id); if (!a) return; a.qty = Math.max(1, a.qty + d); saveToStorage(); renderApplianceList(); recalcAll(); updateCharts(); updateEnergyComparison(); updateBreakdownTable(); }
@@ -360,28 +405,48 @@ function getStandbyHours() { return parseFloat(inpStandbyHours.value) || 20; }
 
 function recalcAll() {
   const rate = getRate(), sHrs = getStandbyHours();
-  const phantom = appliances.filter(a => !a.active);
+
+  // Include Firebase live devices in phantom calculations
   let pDailyKWh = 0;
-  phantom.forEach(a => { pDailyKWh += (a.standbyWatts * a.qty * sHrs) / 1000; });
+  let totalCount = appliances.reduce((s, a) => s + a.qty, 0);
+  let activeCount = appliances.filter(a => a.active).reduce((s, a) => s + a.qty, 0);
+  let allPhantom = []; // for vampire detection
+
+  // Manual appliances
+  appliances.filter(a => !a.active).forEach(a => {
+    pDailyKWh += (a.standbyWatts * a.qty * sHrs) / 1000;
+    allPhantom.push({ name: a.name, icon: a.icon, standbyWatts: a.standbyWatts, qty: a.qty });
+  });
+
+  // Firebase live devices (OFF = phantom/standby)
+  if (esp32Connected) {
+    FIREBASE_DEVICES_LIST.forEach(dev => {
+      totalCount++;
+      const isOn = (liveDeviceStates[dev.key] || 'OFF') === 'ON';
+      if (isOn) { activeCount++; }
+      else {
+        pDailyKWh += (dev.standbyWatts * sHrs) / 1000;
+        allPhantom.push({ name: dev.label, icon: dev.icon, standbyWatts: dev.standbyWatts, qty: 1 });
+      }
+    });
+  }
 
   const dCost = pDailyKWh * rate, mCost = dCost * 30, aCost = dCost * 365;
   const aKWh = pDailyKWh * 365, aCO2 = aKWh * CO2_FACTOR;
-  const total = appliances.reduce((s, a) => s + a.qty, 0);
-  const activeD = appliances.filter(a => a.active).reduce((s, a) => s + a.qty, 0);
 
-  $('#stat-devices').textContent = total;
-  $('#stat-devices-sub').textContent = `${activeD} active · ${total - activeD} standby`;
-  $('#stat-daily-cost').textContent = `₹${formatINR(dCost)}`;
-  $('#stat-monthly-cost').textContent = `₹${formatINR(mCost)}`;
-  $('#stat-monthly-sub').textContent = `₹${formatINR(aCost)} annually`;
+  $('#stat-devices').textContent = totalCount;
+  $('#stat-devices-sub').textContent = `${activeCount} active \u00b7 ${totalCount - activeCount} standby`;
+  $('#stat-daily-cost').textContent = `\u20b9${formatINR(dCost)}`;
+  $('#stat-monthly-cost').textContent = `\u20b9${formatINR(mCost)}`;
+  $('#stat-monthly-sub').textContent = `\u20b9${formatINR(aCost)} annually`;
   $('#stat-energy').textContent = `${aKWh.toFixed(1)} kWh`;
   $('#stat-co2').textContent = `${aCO2.toFixed(1)} kg`;
 
-  if (phantom.length > 0) {
-    const sorted = [...phantom].sort((a, b) => (b.standbyWatts * b.qty) - (a.standbyWatts * a.qty));
+  if (allPhantom.length > 0) {
+    const sorted = [...allPhantom].sort((a, b) => (b.standbyWatts * b.qty) - (a.standbyWatts * a.qty));
     const v = sorted[0]; $('#stat-vampire').textContent = v.icon + ' ' + v.name;
-    $('#stat-vampire-sub').textContent = `₹${formatINR((v.standbyWatts * v.qty * sHrs / 1000) * 365 * rate)}/yr`;
-  } else { $('#stat-vampire').textContent = '—'; $('#stat-vampire-sub').textContent = total > 0 ? 'All active!' : 'Add devices'; }
+    $('#stat-vampire-sub').textContent = `\u20b9${formatINR((v.standbyWatts * v.qty * sHrs / 1000) * 365 * rate)}/yr`;
+  } else { $('#stat-vampire').textContent = '\u2014'; $('#stat-vampire-sub').textContent = totalCount > 0 ? 'All active!' : 'Add devices'; }
 
   updateCO2Display(aCO2, aKWh);
 }
@@ -392,10 +457,22 @@ function recalcAll() {
 function updateEnergyComparison() {
   const rate = getRate(), sHrs = getStandbyHours();
   let nDaily = 0, pDaily = 0;
+
+  // Manual appliances
   appliances.forEach(a => {
     nDaily += (a.activeWatts * a.qty * a.activeHours) / 1000;
     if (!a.active) pDaily += (a.standbyWatts * a.qty * sHrs) / 1000;
   });
+
+  // Firebase live devices
+  if (esp32Connected) {
+    FIREBASE_DEVICES_LIST.forEach(dev => {
+      const isOn = (liveDeviceStates[dev.key] || 'OFF') === 'ON';
+      nDaily += (dev.activeWatts * dev.activeHours) / 1000;
+      if (!isOn) pDaily += (dev.standbyWatts * sHrs) / 1000;
+    });
+  }
+
   const tDaily = nDaily + pDaily;
 
   $('#normal-daily-kwh').textContent = `${nDaily.toFixed(3)} kWh`; $('#normal-daily-cost').textContent = `₹${formatINR(nDaily * rate)}`;
@@ -417,23 +494,50 @@ function updateEnergyComparison() {
 function updateBreakdownTable() {
   const rate = getRate(), sHrs = getStandbyHours();
   const tbody = $('#breakdown-tbody');
-  if (appliances.length === 0) { tbody.innerHTML = '<tr><td colspan="9" class="empty-row">Add appliances to see breakdown</td></tr>'; $('#breakdown-count').textContent = '0 appliances'; return; }
-  $('#breakdown-count').textContent = `${appliances.length} appliances`;
+  const hasLive = esp32Connected && Object.keys(liveDeviceStates).length > 0;
+  const totalItems = appliances.length + (hasLive ? FIREBASE_DEVICES_LIST.length : 0);
+
+  if (totalItems === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-row">Add appliances to see breakdown</td></tr>';
+    $('#breakdown-count').textContent = '0 appliances';
+    return;
+  }
+  $('#breakdown-count').textContent = `${totalItems} appliances`;
 
   let html = '', tN = 0, tP = 0;
+
+  // Firebase live devices first
+  if (hasLive) {
+    FIREBASE_DEVICES_LIST.forEach(dev => {
+      const isOn = (liveDeviceStates[dev.key] || 'OFF') === 'ON';
+      const nD = (dev.activeWatts * dev.activeHours) / 1000;
+      const pD = !isOn ? (dev.standbyWatts * sHrs) / 1000 : 0;
+      tN += nD; tP += pD;
+      html += `<tr style="border-left:3px solid var(--accent-green);">
+        <td>${dev.icon} ${dev.label} <span class="live-tag">\ud83d\udd34 LIVE</span></td>
+        <td>${dev.activeWatts}W</td><td>${dev.standbyWatts}W</td><td>${dev.activeHours}h</td>
+        <td class="normal-val">${nD.toFixed(3)}</td><td class="normal-val">\u20b9${formatINR(nD * 30 * rate)}</td>
+        <td class="phantom-val">${pD.toFixed(3)}</td><td class="phantom-val">\u20b9${formatINR(pD * 30 * rate)}</td>
+        <td class="total-val">\u20b9${formatINR((nD + pD) * 365 * rate)}</td></tr>`;
+    });
+  }
+
+  // Manual appliances
   appliances.forEach(a => {
     const nD = (a.activeWatts * a.qty * a.activeHours) / 1000;
     const pD = !a.active ? (a.standbyWatts * a.qty * sHrs) / 1000 : 0;
     tN += nD; tP += pD;
-    html += `<tr><td>${a.icon} ${a.name}${a.qty > 1 ? ' ×' + a.qty : ''}</td><td>${a.activeWatts}W</td><td>${a.standbyWatts}W</td><td>${a.activeHours}h</td>
-      <td class="normal-val">${nD.toFixed(3)}</td><td class="normal-val">₹${formatINR(nD * 30 * rate)}</td>
-      <td class="phantom-val">${pD.toFixed(3)}</td><td class="phantom-val">₹${formatINR(pD * 30 * rate)}</td>
-      <td class="total-val">₹${formatINR((nD + pD) * 365 * rate)}</td></tr>`;
+    html += `<tr><td>${a.icon} ${a.name}${a.qty > 1 ? ' \u00d7' + a.qty : ''}</td><td>${a.activeWatts}W</td><td>${a.standbyWatts}W</td><td>${a.activeHours}h</td>
+      <td class="normal-val">${nD.toFixed(3)}</td><td class="normal-val">\u20b9${formatINR(nD * 30 * rate)}</td>
+      <td class="phantom-val">${pD.toFixed(3)}</td><td class="phantom-val">\u20b9${formatINR(pD * 30 * rate)}</td>
+      <td class="total-val">\u20b9${formatINR((nD + pD) * 365 * rate)}</td></tr>`;
   });
-  html += `<tr style="background:var(--bg-input); font-weight:700;"><td>📊 TOTAL</td><td>—</td><td>—</td><td>—</td>
-    <td class="normal-val">${tN.toFixed(3)}</td><td class="normal-val">₹${formatINR(tN * 30 * rate)}</td>
-    <td class="phantom-val">${tP.toFixed(3)}</td><td class="phantom-val">₹${formatINR(tP * 30 * rate)}</td>
-    <td class="total-val">₹${formatINR((tN + tP) * 365 * rate)}</td></tr>`;
+
+  // Total row
+  html += `<tr style="background:var(--bg-input); font-weight:700;"><td>\ud83d\udcca TOTAL</td><td>\u2014</td><td>\u2014</td><td>\u2014</td>
+    <td class="normal-val">${tN.toFixed(3)}</td><td class="normal-val">\u20b9${formatINR(tN * 30 * rate)}</td>
+    <td class="phantom-val">${tP.toFixed(3)}</td><td class="phantom-val">\u20b9${formatINR(tP * 30 * rate)}</td>
+    <td class="total-val">\u20b9${formatINR((tN + tP) * 365 * rate)}</td></tr>`;
   tbody.innerHTML = html;
 }
 
@@ -484,18 +588,72 @@ function updateCharts() {
 //  OPTIMIZE
 // ═══════════════════════════════════════════════════════════════
 function runOptimize() {
+  const hour = new Date().getHours(); // 0-23
+  const isDaytime = hour >= 6 && hour < 18; // 6 AM to 6 PM
+  const promises = [];
+
+  if (isDaytime) {
+    // DAYTIME: Turn OFF light and speaker (not needed during day)
+    showToast(`☀️ Daytime (${hour}:00) — Turning OFF Light & Speaker`, 'success', 4000);
+    ['light', 'speaker'].forEach(dev => {
+      promises.push(
+        fetch(FIREBASE_HOST + '/devices/' + dev + '/state.json', {
+          method: 'PUT', headers: {'Content-Type':'application/json'}, body: '"OFF"'
+        }).then(() => { liveDeviceStates[dev] = 'OFF'; })
+      );
+    });
+  } else {
+    // EVENING/NIGHT: Turn ON light
+    showToast(`🌙 Evening (${hour}:00) — Turning ON Light`, 'success', 4000);
+    promises.push(
+      fetch(FIREBASE_HOST + '/devices/light/state.json', {
+        method: 'PUT', headers: {'Content-Type':'application/json'}, body: '"ON"'
+      }).then(() => { liveDeviceStates['light'] = 'ON'; })
+    );
+  }
+
+  // After all Firebase writes, refresh UI
+  Promise.allSettled(promises).then(() => {
+    renderApplianceList();
+    fetchFirebaseDevices(); // Re-sync from Firebase
+    showToast(isDaytime ? '☀️ Day Mode active!' : '🌙 Night Mode active!', 'success', 2000);
+  });
+
+  // Also run the cost analysis
   const rate = getRate(), sHrs = getStandbyHours();
   const phantom = appliances.filter(a => !a.active);
-  if (!phantom.length) { showToast('🎉 Nothing to optimize!', 'success'); return; }
-  const sorted = [...phantom].sort((a, b) => (b.standbyWatts * b.qty) - (a.standbyWatts * a.qty));
+  const sorted = phantom.length ? [...phantom].sort((a, b) => (b.standbyWatts * b.qty) - (a.standbyWatts * a.qty)) : [];
   let total = 0; phantom.forEach(a => { total += (a.standbyWatts * a.qty * sHrs / 1000) * 365 * rate; });
   const top = sorted.slice(0, 3); let topSave = 0; top.forEach(a => { topSave += (a.standbyWatts * a.qty * sHrs / 1000) * 365 * rate; });
   const pct = total > 0 ? Math.round((topSave / total) * 100) : 0;
   optimizeResult.classList.add('show');
   $('#optimize-pct').textContent = `${pct}% savings`;
   $('#savings-bar-fill').style.width = `${Math.min(pct, 100)}%`;
-  $('#optimize-tips').innerHTML = top.map((a, i) => `<div class="tip-item"><span>${['🥇','🥈','🥉'][i]}</span><span><strong>${a.icon} ${a.name}</strong> — Save ₹${formatINR((a.standbyWatts * a.qty * sHrs / 1000) * 365 * rate)}/yr</span></div>`).join('') +
-    `<div class="tip-item" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-top:8px;"><span>💡</span><span>Unplug top ${top.length} vampires = <strong>₹${formatINR(topSave)}/yr saved!</strong></span></div>`;
+  $('#optimize-tips').innerHTML = `<div class="tip-item"><span>${isDaytime ? '☀️' : '🌙'}</span><span><strong>${isDaytime ? 'Day Mode' : 'Night Mode'}</strong> — ${isDaytime ? 'Light & Speaker OFF (save energy)' : 'Light ON for visibility'}</span></div>` +
+    top.map((a, i) => `<div class="tip-item"><span>${['🥇','🥈','🥉'][i]}</span><span><strong>${a.icon} ${a.name}</strong> — Save ₹${formatINR((a.standbyWatts * a.qty * sHrs / 1000) * 365 * rate)}/yr</span></div>`).join('') +
+    (top.length ? `<div class="tip-item" style="background:#ecfdf5;border:1px solid #a7f3d0;margin-top:8px;"><span>💡</span><span>Unplug top ${top.length} vampires = <strong>₹${formatINR(topSave)}/yr saved!</strong></span></div>` : '');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROAM MODE — Turn off ALL devices when leaving home
+// ═══════════════════════════════════════════════════════════════
+function roamMode() {
+  showToast('🚶 Roam Mode — Turning OFF all devices...', 'warning', 3000);
+  const promises = [];
+  FIREBASE_DEVICES_LIST.forEach(dev => {
+    promises.push(
+      fetch(FIREBASE_HOST + '/devices/' + dev.key + '/state.json', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: '"OFF"'
+      }).then(() => { liveDeviceStates[dev.key] = 'OFF'; })
+    );
+  });
+  Promise.allSettled(promises).then(() => {
+    renderApplianceList();
+    fetchFirebaseDevices();
+    showToast('✅ All devices OFF — safe to leave!', 'success', 3000);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -38,7 +38,7 @@ const int relayPins[NUM_RELAYS] = { RELAY_1_PIN, RELAY_2_PIN, RELAY_3_PIN, RELAY
 
 // Device names matching Firebase DB structure
 const char* deviceNames[NUM_RELAYS] = { "cooler", "fan", "light", "speaker" };
-const char* deviceLabels[NUM_RELAYS] = { "Cooler", "Fan", "light", "Speaker" };
+const char* deviceLabels[NUM_RELAYS] = { "AC", "Fan", "Light", "TV" };
 
 #define RELAY_ON   LOW    // Active LOW
 #define RELAY_OFF  HIGH

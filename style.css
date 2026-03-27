@@ -1204,3 +1204,26 @@ input:checked + .slider:before { transform: translateX(20px); }
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+
+.live-device {
+  border-left: 3px solid var(--accent-green) !important;
+  background: rgba(16, 185, 129, 0.04) !important;
+}
+
+.live-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+  animation: livePulse 2s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
