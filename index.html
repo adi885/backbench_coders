@@ -4,17 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Phantom Power Cost Estimator | Smart Energy Dashboard</title>
-    <meta name="description" content="Calculate the hidden cost and environmental impact of standby power in your home. Visualize energy waste with smart charts, alerts, and optimization tips.">
+    <meta name="description" content="Calculate hidden standby power costs. Compare normal vs phantom energy usage with Firebase-connected ESP32 relay control.">
     <link rel="stylesheet" href="style.css">
-    <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <!-- html2canvas + jsPDF for PDF export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 <body>
 
-    <!-- ═══ Toast Notification Container ═══ -->
     <div class="toast-container" id="toast-container"></div>
 
     <!-- ═══ HEADER ═══ -->
@@ -28,15 +25,13 @@
                 </div>
             </div>
             <div class="header-actions">
-                <button class="btn btn-neon" id="btn-optimize" title="Optimize My Home">
-                    🧠 Optimize
-                </button>
-                <button class="btn btn-secondary" id="btn-export" title="Export PDF Report">
-                    📄 Export PDF
-                </button>
-                <button class="btn btn-secondary" id="btn-reset" title="Reset All Data">
-                    🔄 Reset
-                </button>
+                <div class="esp32-status" id="esp32-status-badge">
+                    <span class="status-dot disconnected" id="esp32-dot"></span>
+                    <span id="esp32-status-text">ESP32 Offline</span>
+                </div>
+                <button class="btn btn-neon" id="btn-optimize" title="Optimize My Home">🧠 Optimize</button>
+                <button class="btn btn-secondary" id="btn-export" title="Export PDF Report">📄 Export PDF</button>
+                <button class="btn btn-secondary" id="btn-reset" title="Reset All Data">🔄 Reset</button>
             </div>
         </div>
     </header>
@@ -44,214 +39,256 @@
     <!-- ═══ MAIN CONTENT ═══ -->
     <main class="app-main" id="capture-area">
 
+        <!-- ─── Firebase Live Device Control Panel ─── -->
+        <section class="esp32-panel" id="esp32-panel">
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">🎛️</span> Live Device Control <span class="firebase-badge">🔥 Firebase</span></span>
+                    <span class="info-badge" id="esp32-info-badge">
+                        <span class="status-dot-sm disconnected" id="esp32-dot-sm"></span>
+                        <span id="esp32-ip-text">Connecting to Firebase...</span>
+                    </span>
+                </div>
+                <div class="relay-grid" id="relay-grid">
+                    <!-- Cooler -->
+                    <div class="relay-card" id="relay-card-cooler" data-device="cooler">
+                        <div class="relay-header">
+                            <span class="relay-number">❄️</span>
+                            <label class="status-toggle relay-toggle" title="Toggle Cooler">
+                                <input type="checkbox" id="relay-toggle-cooler" onchange="toggleDevice('cooler', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="relay-name">Cooler</div>
+                        <div class="relay-stats">
+                            <div class="relay-stat"><span class="relay-stat-label">Active</span><span class="relay-stat-value" id="device-active-watt-cooler">200W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Standby</span><span class="relay-stat-value" id="device-standby-watt-cooler">5W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Runtime</span><span class="relay-stat-value" id="device-runtime-cooler">0 min</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Cost</span><span class="relay-stat-value" id="device-cost-cooler">₹0</span></div>
+                        </div>
+                        <div class="relay-status-bar"><div class="relay-status-fill" id="device-fill-cooler"></div></div>
+                    </div>
+                    <!-- Fan -->
+                    <div class="relay-card" id="relay-card-fan" data-device="fan">
+                        <div class="relay-header">
+                            <span class="relay-number">💨</span>
+                            <label class="status-toggle relay-toggle" title="Toggle Fan">
+                                <input type="checkbox" id="relay-toggle-fan" onchange="toggleDevice('fan', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="relay-name">Fan</div>
+                        <div class="relay-stats">
+                            <div class="relay-stat"><span class="relay-stat-label">Active</span><span class="relay-stat-value" id="device-active-watt-fan">75W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Standby</span><span class="relay-stat-value" id="device-standby-watt-fan">1W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Runtime</span><span class="relay-stat-value" id="device-runtime-fan">0 min</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Cost</span><span class="relay-stat-value" id="device-cost-fan">₹0</span></div>
+                        </div>
+                        <div class="relay-status-bar"><div class="relay-status-fill" id="device-fill-fan"></div></div>
+                    </div>
+                    <!-- Light -->
+                    <div class="relay-card" id="relay-card-light" data-device="light">
+                        <div class="relay-header">
+                            <span class="relay-number">💡</span>
+                            <label class="status-toggle relay-toggle" title="Toggle Light">
+                                <input type="checkbox" id="relay-toggle-light" onchange="toggleDevice('light', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="relay-name">Light</div>
+                        <div class="relay-stats">
+                            <div class="relay-stat"><span class="relay-stat-label">Active</span><span class="relay-stat-value" id="device-active-watt-light">60W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Standby</span><span class="relay-stat-value" id="device-standby-watt-light">0.5W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Runtime</span><span class="relay-stat-value" id="device-runtime-light">0 min</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Cost</span><span class="relay-stat-value" id="device-cost-light">₹0</span></div>
+                        </div>
+                        <div class="relay-status-bar"><div class="relay-status-fill" id="device-fill-light"></div></div>
+                    </div>
+
+                    <!-- Speaker -->
+                    <div class="relay-card" id="relay-card-speaker" data-device="speaker">
+                        <div class="relay-header">
+                            <span class="relay-number">🔊</span>
+                            <label class="status-toggle relay-toggle" title="Toggle Speaker">
+                                <input type="checkbox" id="relay-toggle-speaker" onchange="toggleDevice('speaker', this.checked)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="relay-name">Speaker</div>
+                        <div class="relay-stats">
+                            <div class="relay-stat"><span class="relay-stat-label">Active</span><span class="relay-stat-value" id="device-active-watt-speaker">30W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Standby</span><span class="relay-stat-value" id="device-standby-watt-speaker">2W</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Runtime</span><span class="relay-stat-value" id="device-runtime-speaker">0 min</span></div>
+                            <div class="relay-stat"><span class="relay-stat-label">Cost</span><span class="relay-stat-value" id="device-cost-speaker">₹0</span></div>
+                        </div>
+                        <div class="relay-status-bar"><div class="relay-status-fill" id="device-fill-speaker"></div></div>
+                    </div>
+                </div>
+                <div class="esp32-system-info">
+                    <div class="sys-item"><span class="sys-label">Uptime</span><span class="sys-value" id="esp32-uptime">—</span></div>
+                    <div class="sys-item"><span class="sys-label">Free Heap</span><span class="sys-value" id="esp32-heap">—</span></div>
+                    <div class="sys-item"><span class="sys-label">Total Runtime</span><span class="sys-value" id="esp32-total-runtime">—</span></div>
+                    <div class="sys-item"><span class="sys-label">Total Cost</span><span class="sys-value" id="esp32-total-cost">₹0</span></div>
+                </div>
+            </div>
+        </section>
+
         <!-- ─── Phantom Detection Banner ─── -->
         <div class="phantom-banner" id="phantom-banner">
             <span class="icon">⚠️</span>
-            <span id="phantom-banner-text">Phantom power detected! Some devices are OFF but still consuming energy.</span>
+            <span id="phantom-banner-text">Phantom power detected!</span>
         </div>
 
         <!-- ═══ LIVE STATS ═══ -->
         <section class="stats-grid" id="stats-grid">
-            <div class="stat-card green">
-                <div class="stat-icon">🔌</div>
-                <div class="stat-label">Total Devices</div>
-                <div class="stat-value" id="stat-devices">0</div>
-                <div class="stat-sub" id="stat-devices-sub">No devices added</div>
+            <div class="stat-card green"><div class="stat-icon">🔌</div><div class="stat-label">Total Devices</div><div class="stat-value" id="stat-devices">0</div><div class="stat-sub" id="stat-devices-sub">No devices added</div></div>
+            <div class="stat-card blue"><div class="stat-icon">💰</div><div class="stat-label">Daily Phantom Cost</div><div class="stat-value" id="stat-daily-cost">₹0</div><div class="stat-sub" id="stat-daily-sub">Per day wasted</div></div>
+            <div class="stat-card yellow"><div class="stat-icon">📅</div><div class="stat-label">Monthly Phantom Cost</div><div class="stat-value" id="stat-monthly-cost">₹0</div><div class="stat-sub" id="stat-monthly-sub">₹0 annually</div></div>
+            <div class="stat-card red"><div class="stat-icon">⚡</div><div class="stat-label">Phantom Energy</div><div class="stat-value" id="stat-energy">0 kWh</div><div class="stat-sub" id="stat-energy-sub">Per year (standby waste)</div></div>
+            <div class="stat-card purple"><div class="stat-icon">🌍</div><div class="stat-label">CO₂ Emissions</div><div class="stat-value" id="stat-co2">0 kg</div><div class="stat-sub">0.82 kg/kWh (India Grid)</div></div>
+            <div class="stat-card cyan"><div class="stat-icon">🧛</div><div class="stat-label">Biggest Vampire</div><div class="stat-value" id="stat-vampire">—</div><div class="stat-sub" id="stat-vampire-sub">Add devices to see</div></div>
+        </section>
+
+        <!-- ═══ ENERGY COMPARISON: Normal vs Phantom ═══ -->
+        <section class="energy-comparison-section">
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">📊</span> Normal vs Phantom Energy Usage</span>
+                    <span class="info-badge">All Appliances</span>
+                </div>
+                <p class="section-desc">Compare how much energy your appliances use when actively running vs how much they waste in standby (phantom) mode.</p>
+                <div class="energy-summary-grid" id="energy-summary-grid">
+                    <div class="energy-summary-card normal">
+                        <div class="energy-summary-icon">🔋</div>
+                        <div class="energy-summary-title">Normal (Active) Usage</div>
+                        <div class="energy-summary-stats">
+                            <div class="es-row"><span>Daily</span><span class="es-val" id="normal-daily-kwh">0 kWh</span><span class="es-cost" id="normal-daily-cost">₹0</span></div>
+                            <div class="es-row"><span>Monthly</span><span class="es-val" id="normal-monthly-kwh">0 kWh</span><span class="es-cost" id="normal-monthly-cost">₹0</span></div>
+                            <div class="es-row"><span>Yearly</span><span class="es-val" id="normal-yearly-kwh">0 kWh</span><span class="es-cost" id="normal-yearly-cost">₹0</span></div>
+                        </div>
+                    </div>
+                    <div class="energy-summary-card phantom">
+                        <div class="energy-summary-icon">🧛</div>
+                        <div class="energy-summary-title">Phantom (Standby) Waste</div>
+                        <div class="energy-summary-stats">
+                            <div class="es-row"><span>Daily</span><span class="es-val" id="phantom-daily-kwh">0 kWh</span><span class="es-cost" id="phantom-daily-cost">₹0</span></div>
+                            <div class="es-row"><span>Monthly</span><span class="es-val" id="phantom-monthly-kwh">0 kWh</span><span class="es-cost" id="phantom-monthly-cost">₹0</span></div>
+                            <div class="es-row"><span>Yearly</span><span class="es-val" id="phantom-yearly-kwh">0 kWh</span><span class="es-cost" id="phantom-yearly-cost">₹0</span></div>
+                        </div>
+                    </div>
+                    <div class="energy-summary-card total">
+                        <div class="energy-summary-icon">📈</div>
+                        <div class="energy-summary-title">Total Combined</div>
+                        <div class="energy-summary-stats">
+                            <div class="es-row"><span>Daily</span><span class="es-val" id="total-daily-kwh">0 kWh</span><span class="es-cost" id="total-daily-cost">₹0</span></div>
+                            <div class="es-row"><span>Monthly</span><span class="es-val" id="total-monthly-kwh">0 kWh</span><span class="es-cost" id="total-monthly-cost">₹0</span></div>
+                            <div class="es-row"><span>Yearly</span><span class="es-val" id="total-yearly-kwh">0 kWh</span><span class="es-cost" id="total-yearly-cost">₹0</span></div>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="stat-card blue">
-                <div class="stat-icon">💰</div>
-                <div class="stat-label">Daily Cost</div>
-                <div class="stat-value" id="stat-daily-cost">₹0</div>
-                <div class="stat-sub" id="stat-daily-sub">Per day wasted</div>
-            </div>
-            <div class="stat-card yellow">
-                <div class="stat-icon">📅</div>
-                <div class="stat-label">Monthly Cost</div>
-                <div class="stat-value" id="stat-monthly-cost">₹0</div>
-                <div class="stat-sub" id="stat-monthly-sub">₹0 annually</div>
-            </div>
-            <div class="stat-card red">
-                <div class="stat-icon">⚡</div>
-                <div class="stat-label">Energy Wasted</div>
-                <div class="stat-value" id="stat-energy">0 kWh</div>
-                <div class="stat-sub" id="stat-energy-sub">Per year</div>
-            </div>
-            <div class="stat-card purple">
-                <div class="stat-icon">🌍</div>
-                <div class="stat-label">CO₂ Emissions</div>
-                <div class="stat-value" id="stat-co2">0 kg</div>
-                <div class="stat-sub">0.82 kg/kWh (India Grid)</div>
-            </div>
-            <div class="stat-card cyan">
-                <div class="stat-icon">🧛</div>
-                <div class="stat-label">Biggest Vampire</div>
-                <div class="stat-value" id="stat-vampire">—</div>
-                <div class="stat-sub" id="stat-vampire-sub">Add devices to see</div>
+        </section>
+
+        <!-- ═══ PER-APPLIANCE ENERGY BREAKDOWN TABLE ═══ -->
+        <section class="appliance-breakdown-section">
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">📋</span> Appliance Energy Breakdown</span>
+                    <span class="info-badge" id="breakdown-count">0 appliances</span>
+                </div>
+                <p class="section-desc">Detailed normal and phantom energy usage for each appliance (daily / monthly / yearly).</p>
+                <div class="breakdown-table-wrap">
+                    <table class="breakdown-table" id="breakdown-table">
+                        <thead>
+                            <tr>
+                                <th>Appliance</th>
+                                <th>Active (W)</th>
+                                <th>Standby (W)</th>
+                                <th>Active Hrs/Day</th>
+                                <th>Normal kWh/day</th>
+                                <th>Normal ₹/mo</th>
+                                <th>Phantom kWh/day</th>
+                                <th>Phantom ₹/mo</th>
+                                <th>Total ₹/yr</th>
+                            </tr>
+                        </thead>
+                        <tbody id="breakdown-tbody">
+                            <tr><td colspan="9" class="empty-row">Add appliances to see breakdown</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </section>
 
         <!-- ═══ CONTROLS + APPLIANCE LIST ═══ -->
         <section class="controls-grid">
-            <!-- Left: Add Appliance -->
             <div class="card card-glow">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">➕</span> Add Appliance</span>
-                </div>
-
+                <div class="card-header"><span class="card-title"><span class="icon">➕</span> Add Appliance</span></div>
                 <div class="form-group">
                     <label for="sel-appliance">Select Appliance</label>
-                    <select class="form-select" id="sel-appliance">
-                        <option value="" disabled selected>Choose an appliance...</option>
-                    </select>
+                    <select class="form-select" id="sel-appliance"><option value="" disabled selected>Choose an appliance...</option></select>
                 </div>
-
                 <div class="input-row" style="margin-bottom: 16px;">
-                    <div class="form-group">
-                        <label for="inp-custom-name">Custom Name</label>
-                        <input type="text" class="form-input" id="inp-custom-name" placeholder="e.g., Gaming Console">
-                    </div>
-                    <div class="form-group" style="max-width:120px;">
-                        <label for="inp-custom-watts">Watts (W)</label>
-                        <input type="number" class="form-input" id="inp-custom-watts" placeholder="5" min="0" step="0.1">
-                    </div>
+                    <div class="form-group"><label for="inp-custom-name">Custom Name</label><input type="text" class="form-input" id="inp-custom-name" placeholder="e.g., Gaming Console"></div>
+                    <div class="form-group" style="max-width:120px;"><label for="inp-custom-watts">Standby (W)</label><input type="number" class="form-input" id="inp-custom-watts" placeholder="5" min="0" step="0.1"></div>
                 </div>
-
                 <div class="input-row" style="margin-bottom: 16px;">
-                    <div class="form-group">
-                        <label for="inp-rate">Electricity Rate (₹/kWh) <span class="info-badge">Avg: ₹7.50</span></label>
-                        <input type="number" class="form-input" id="inp-rate" value="7.5" min="0" step="0.1">
-                    </div>
-                    <div class="form-group" style="max-width:140px;">
-                        <label for="inp-standby-hours">Standby Hours/Day</label>
-                        <input type="number" class="form-input" id="inp-standby-hours" value="20" min="0" max="24" step="1">
-                    </div>
+                    <div class="form-group" style="max-width:140px;"><label for="inp-active-watts">Active (W)</label><input type="number" class="form-input" id="inp-active-watts" placeholder="100" min="0" step="0.1"></div>
+                    <div class="form-group" style="max-width:140px;"><label for="inp-active-hours">Active Hrs/Day</label><input type="number" class="form-input" id="inp-active-hours" value="4" min="0" max="24" step="0.5"></div>
                 </div>
-
+                <div class="input-row" style="margin-bottom: 16px;">
+                    <div class="form-group"><label for="inp-rate">Rate (₹/kWh) <span class="info-badge">Avg: ₹7.50</span></label><input type="number" class="form-input" id="inp-rate" value="7.5" min="0" step="0.1"></div>
+                    <div class="form-group" style="max-width:140px;"><label for="inp-standby-hours">Standby Hrs/Day</label><input type="number" class="form-input" id="inp-standby-hours" value="20" min="0" max="24" step="1"></div>
+                </div>
                 <div style="display: flex; gap: 8px;">
                     <button class="btn btn-primary" id="btn-add" style="flex:1;">➕ Add Selected</button>
                     <button class="btn btn-neon" id="btn-add-custom" style="flex:1;">✏️ Add Custom</button>
                 </div>
             </div>
-
-            <!-- Right: Appliance List -->
             <div class="card">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">📋</span> My Appliances</span>
-                    <span class="info-badge" id="badge-count">0 devices</span>
-                </div>
+                <div class="card-header"><span class="card-title"><span class="icon">📋</span> My Appliances</span><span class="info-badge" id="badge-count">0 devices</span></div>
                 <div class="appliance-list" id="appliance-list">
-                    <div class="empty-state" id="empty-state">
-                        <div class="icon">🔌</div>
-                        <p>No appliances added yet.<br>Start by selecting one from the left.</p>
-                    </div>
+                    <div class="empty-state" id="empty-state"><div class="icon">🔌</div><p>No appliances added yet.<br>Select one from the left.</p></div>
                 </div>
             </div>
         </section>
 
         <!-- ═══ CHARTS ═══ -->
         <section class="charts-grid">
-            <div class="card card-glow">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">🥧</span> Energy by Appliance</span>
-                </div>
-                <div class="chart-wrap">
-                    <canvas id="chart-pie"></canvas>
-                </div>
-            </div>
-            <div class="card card-glow">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">📊</span> Monthly Cost Comparison</span>
-                </div>
-                <div class="chart-wrap">
-                    <canvas id="chart-bar"></canvas>
-                </div>
-            </div>
+            <div class="card card-glow"><div class="card-header"><span class="card-title"><span class="icon">🥧</span> Phantom Energy by Appliance</span></div><div class="chart-wrap"><canvas id="chart-pie"></canvas></div></div>
+            <div class="card card-glow"><div class="card-header"><span class="card-title"><span class="icon">📊</span> Monthly Cost: Normal vs Phantom</span></div><div class="chart-wrap"><canvas id="chart-bar"></canvas></div></div>
         </section>
 
-        <!-- ═══ BOTTOM GRID: Optimize + Gamification + CO₂ ═══ -->
+        <!-- ═══ BOTTOM GRID ═══ -->
         <section class="bottom-grid">
-
-            <!-- Optimize / Save Mode -->
             <div class="card card-glow optimize-section">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">🧠</span> Save Mode</span>
-                </div>
-                <p style="font-size:0.82rem; color: var(--text-muted); margin-bottom: 12px;">
-                    Find out which devices waste the most energy and how much you can save.
-                </p>
-                <button class="btn btn-primary" id="btn-run-optimize" style="width:100%;">
-                    ⚡ Optimize My Home
-                </button>
+                <div class="card-header"><span class="card-title"><span class="icon">🧠</span> Save Mode</span></div>
+                <p style="font-size:0.82rem; color: var(--text-muted); margin-bottom: 12px;">Find which devices waste the most energy.</p>
+                <button class="btn btn-primary" id="btn-run-optimize" style="width:100%;">⚡ Optimize My Home</button>
                 <div class="optimize-result" id="optimize-result">
-                    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
-                        <span style="font-size:0.82rem; color:var(--text-secondary);">Potential Savings</span>
-                        <span style="font-family:'JetBrains Mono'; font-weight:700; color:var(--neon-green-light);" id="optimize-pct">0%</span>
-                    </div>
-                    <div class="savings-bar">
-                        <div class="savings-bar-fill" id="savings-bar-fill" style="width:0%"></div>
-                    </div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span style="font-size:0.82rem; color:var(--text-secondary);">Potential Savings</span><span style="font-family:'JetBrains Mono'; font-weight:700; color:var(--accent-green);" id="optimize-pct">0%</span></div>
+                    <div class="savings-bar"><div class="savings-bar-fill" id="savings-bar-fill" style="width:0%"></div></div>
                     <div id="optimize-tips"></div>
                 </div>
             </div>
-
-            <!-- Gamification -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">🏆</span> Achievements</span>
-                </div>
-                <div class="badges-grid" id="badges-grid">
-                    <!-- Injected by JS -->
-                </div>
-                <div class="leaderboard-msg" id="leaderboard-msg">
-                    🌍 Add appliances to see your ranking!
-                </div>
-            </div>
-
-            <!-- CO₂ Impact + Kill Switch -->
+            <div class="card"><div class="card-header"><span class="card-title"><span class="icon">🏆</span> Achievements</span></div><div class="badges-grid" id="badges-grid"></div><div class="leaderboard-msg" id="leaderboard-msg">🌍 Add appliances to start!</div></div>
             <div class="card card-glow">
-                <div class="card-header">
-                    <span class="card-title"><span class="icon">🌍</span> CO₂ & Kill Switch</span>
+                <div class="card-header"><span class="card-title"><span class="icon">🌍</span> CO₂ & Kill Switch</span></div>
+                <div class="co2-display"><div class="co2-value" id="co2-big-value">0 <span class="co2-unit">kg CO₂/yr</span></div><div class="co2-bar"><div class="co2-bar-fill" id="co2-bar-fill" style="width:0%;"></div></div><div class="co2-context" id="co2-context">No emissions yet</div></div>
+                <div class="co2-equiv">
+                    <div class="co2-equiv-item"><div class="icon">🌳</div><div class="val" id="co2-trees">0</div><div class="label">Trees needed</div></div>
+                    <div class="co2-equiv-item"><div class="icon">🚗</div><div class="val" id="co2-km">0</div><div class="label">km driving</div></div>
+                    <div class="co2-equiv-item"><div class="icon">💡</div><div class="val" id="co2-bulb-hrs">0</div><div class="label">bulb hours</div></div>
                 </div>
-                <div class="co2-display">
-                    <div class="co2-value" id="co2-big-value">0 <span class="co2-unit">kg CO₂/yr</span></div>
-                    <div class="co2-bar">
-                        <div class="co2-bar-fill" id="co2-bar-fill" style="width:0%; background: var(--neon-green);"></div>
-                    </div>
-                    <div class="co2-context" id="co2-context">No emissions yet</div>
-                </div>
-                <div class="co2-equiv" id="co2-equiv">
-                    <div class="co2-equiv-item">
-                        <div class="icon">🌳</div>
-                        <div class="val" id="co2-trees">0</div>
-                        <div class="label">Trees needed</div>
-                    </div>
-                    <div class="co2-equiv-item">
-                        <div class="icon">🚗</div>
-                        <div class="val" id="co2-km">0</div>
-                        <div class="label">km driving</div>
-                    </div>
-                    <div class="co2-equiv-item">
-                        <div class="icon">💡</div>
-                        <div class="val" id="co2-bulb-hrs">0</div>
-                        <div class="label">bulb hours</div>
-                    </div>
-                </div>
-
-                <!-- Kill Switch -->
-                <div class="kill-switch-container" style="margin-top: 20px; border-top: 1px solid var(--border-dim); padding-top: 20px;">
-                    <button class="kill-switch-btn" id="kill-switch" title="Kill All Phantom Power">
-                        ⚡
-                    </button>
+                <div class="kill-switch-container" style="margin-top: 20px; border-top: 1px solid var(--border-light); padding-top: 20px;">
+                    <button class="kill-switch-btn" id="kill-switch" title="Kill All Phantom Power">⚡</button>
                     <div class="kill-label" id="kill-label">Kill Phantom Power</div>
                 </div>
             </div>
         </section>
     </main>
 
-    <!-- ═══ FOOTER ═══ -->
-    <footer class="app-footer">
-        <p>© 2026 Phantom Power Cost Estimator — Built for Hackathon Excellence | Data saved locally in your browser</p>
-    </footer>
+    <footer class="app-footer"><p>© 2026 Phantom Power Cost Estimator — Hackathon TGPCET | 🔥 Firebase RTDB + ESP32</p></footer>
 
     <script src="script.js"></script>
 </body>
