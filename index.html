@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phantom Power Cost Estimator | Smart Energy Dashboard</title>
+    <meta name="description" content="Calculate the hidden cost and environmental impact of standby power in your home. Visualize energy waste with smart charts, alerts, and optimization tips.">
+    <link rel="stylesheet" href="style.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <!-- html2canvas + jsPDF for PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+    <!-- ═══ Toast Notification Container ═══ -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- ═══ HEADER ═══ -->
+    <header class="app-header">
+        <div class="header-inner">
+            <div class="header-brand">
+                <div class="brand-icon">⚡</div>
+                <div class="brand-text">
+                    <h1>Phantom Power Estimator</h1>
+                    <p>Smart Energy Dashboard</p>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-neon" id="btn-optimize" title="Optimize My Home">
+                    🧠 Optimize
+                </button>
+                <button class="btn btn-secondary" id="btn-export" title="Export PDF Report">
+                    📄 Export PDF
+                </button>
+                <button class="btn btn-secondary" id="btn-reset" title="Reset All Data">
+                    🔄 Reset
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ═══ MAIN CONTENT ═══ -->
+    <main class="app-main" id="capture-area">
+
+        <!-- ─── Phantom Detection Banner ─── -->
+        <div class="phantom-banner" id="phantom-banner">
+            <span class="icon">⚠️</span>
+            <span id="phantom-banner-text">Phantom power detected! Some devices are OFF but still consuming energy.</span>
+        </div>
+
+        <!-- ═══ LIVE STATS ═══ -->
+        <section class="stats-grid" id="stats-grid">
+            <div class="stat-card green">
+                <div class="stat-icon">🔌</div>
+                <div class="stat-label">Total Devices</div>
+                <div class="stat-value" id="stat-devices">0</div>
+                <div class="stat-sub" id="stat-devices-sub">No devices added</div>
+            </div>
+            <div class="stat-card blue">
+                <div class="stat-icon">💰</div>
+                <div class="stat-label">Daily Cost</div>
+                <div class="stat-value" id="stat-daily-cost">₹0</div>
+                <div class="stat-sub" id="stat-daily-sub">Per day wasted</div>
+            </div>
+            <div class="stat-card yellow">
+                <div class="stat-icon">📅</div>
+                <div class="stat-label">Monthly Cost</div>
+                <div class="stat-value" id="stat-monthly-cost">₹0</div>
+                <div class="stat-sub" id="stat-monthly-sub">₹0 annually</div>
+            </div>
+            <div class="stat-card red">
+                <div class="stat-icon">⚡</div>
+                <div class="stat-label">Energy Wasted</div>
+                <div class="stat-value" id="stat-energy">0 kWh</div>
+                <div class="stat-sub" id="stat-energy-sub">Per year</div>
+            </div>
+            <div class="stat-card purple">
+                <div class="stat-icon">🌍</div>
+                <div class="stat-label">CO₂ Emissions</div>
+                <div class="stat-value" id="stat-co2">0 kg</div>
+                <div class="stat-sub">0.82 kg/kWh (India Grid)</div>
+            </div>
+            <div class="stat-card cyan">
+                <div class="stat-icon">🧛</div>
+                <div class="stat-label">Biggest Vampire</div>
+                <div class="stat-value" id="stat-vampire">—</div>
+                <div class="stat-sub" id="stat-vampire-sub">Add devices to see</div>
+            </div>
+        </section>
+
+        <!-- ═══ CONTROLS + APPLIANCE LIST ═══ -->
+        <section class="controls-grid">
+            <!-- Left: Add Appliance -->
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">➕</span> Add Appliance</span>
+                </div>
+
+                <div class="form-group">
+                    <label for="sel-appliance">Select Appliance</label>
+                    <select class="form-select" id="sel-appliance">
+                        <option value="" disabled selected>Choose an appliance...</option>
+                    </select>
+                </div>
+
+                <div class="input-row" style="margin-bottom: 16px;">
+                    <div class="form-group">
+                        <label for="inp-custom-name">Custom Name</label>
+                        <input type="text" class="form-input" id="inp-custom-name" placeholder="e.g., Gaming Console">
+                    </div>
+                    <div class="form-group" style="max-width:120px;">
+                        <label for="inp-custom-watts">Watts (W)</label>
+                        <input type="number" class="form-input" id="inp-custom-watts" placeholder="5" min="0" step="0.1">
+                    </div>
+                </div>
+
+                <div class="input-row" style="margin-bottom: 16px;">
+                    <div class="form-group">
+                        <label for="inp-rate">Electricity Rate (₹/kWh) <span class="info-badge">Avg: ₹7.50</span></label>
+                        <input type="number" class="form-input" id="inp-rate" value="7.5" min="0" step="0.1">
+                    </div>
+                    <div class="form-group" style="max-width:140px;">
+                        <label for="inp-standby-hours">Standby Hours/Day</label>
+                        <input type="number" class="form-input" id="inp-standby-hours" value="20" min="0" max="24" step="1">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-primary" id="btn-add" style="flex:1;">➕ Add Selected</button>
+                    <button class="btn btn-neon" id="btn-add-custom" style="flex:1;">✏️ Add Custom</button>
+                </div>
+            </div>
+
+            <!-- Right: Appliance List -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">📋</span> My Appliances</span>
+                    <span class="info-badge" id="badge-count">0 devices</span>
+                </div>
+                <div class="appliance-list" id="appliance-list">
+                    <div class="empty-state" id="empty-state">
+                        <div class="icon">🔌</div>
+                        <p>No appliances added yet.<br>Start by selecting one from the left.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ CHARTS ═══ -->
+        <section class="charts-grid">
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">🥧</span> Energy by Appliance</span>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="chart-pie"></canvas>
+                </div>
+            </div>
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">📊</span> Monthly Cost Comparison</span>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="chart-bar"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- ═══ BOTTOM GRID: Optimize + Gamification + CO₂ ═══ -->
+        <section class="bottom-grid">
+
+            <!-- Optimize / Save Mode -->
+            <div class="card card-glow optimize-section">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">🧠</span> Save Mode</span>
+                </div>
+                <p style="font-size:0.82rem; color: var(--text-muted); margin-bottom: 12px;">
+                    Find out which devices waste the most energy and how much you can save.
+                </p>
+                <button class="btn btn-primary" id="btn-run-optimize" style="width:100%;">
+                    ⚡ Optimize My Home
+                </button>
+                <div class="optimize-result" id="optimize-result">
+                    <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+                        <span style="font-size:0.82rem; color:var(--text-secondary);">Potential Savings</span>
+                        <span style="font-family:'JetBrains Mono'; font-weight:700; color:var(--neon-green-light);" id="optimize-pct">0%</span>
+                    </div>
+                    <div class="savings-bar">
+                        <div class="savings-bar-fill" id="savings-bar-fill" style="width:0%"></div>
+                    </div>
+                    <div id="optimize-tips"></div>
+                </div>
+            </div>
+
+            <!-- Gamification -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">🏆</span> Achievements</span>
+                </div>
+                <div class="badges-grid" id="badges-grid">
+                    <!-- Injected by JS -->
+                </div>
+                <div class="leaderboard-msg" id="leaderboard-msg">
+                    🌍 Add appliances to see your ranking!
+                </div>
+            </div>
+
+            <!-- CO₂ Impact + Kill Switch -->
+            <div class="card card-glow">
+                <div class="card-header">
+                    <span class="card-title"><span class="icon">🌍</span> CO₂ & Kill Switch</span>
+                </div>
+                <div class="co2-display">
+                    <div class="co2-value" id="co2-big-value">0 <span class="co2-unit">kg CO₂/yr</span></div>
+                    <div class="co2-bar">
+                        <div class="co2-bar-fill" id="co2-bar-fill" style="width:0%; background: var(--neon-green);"></div>
+                    </div>
+                    <div class="co2-context" id="co2-context">No emissions yet</div>
+                </div>
+                <div class="co2-equiv" id="co2-equiv">
+                    <div class="co2-equiv-item">
+                        <div class="icon">🌳</div>
+                        <div class="val" id="co2-trees">0</div>
+                        <div class="label">Trees needed</div>
+                    </div>
+                    <div class="co2-equiv-item">
+                        <div class="icon">🚗</div>
+                        <div class="val" id="co2-km">0</div>
+                        <div class="label">km driving</div>
+                    </div>
+                    <div class="co2-equiv-item">
+                        <div class="icon">💡</div>
+                        <div class="val" id="co2-bulb-hrs">0</div>
+                        <div class="label">bulb hours</div>
+                    </div>
+                </div>
+
+                <!-- Kill Switch -->
+                <div class="kill-switch-container" style="margin-top: 20px; border-top: 1px solid var(--border-dim); padding-top: 20px;">
+                    <button class="kill-switch-btn" id="kill-switch" title="Kill All Phantom Power">
+                        ⚡
+                    </button>
+                    <div class="kill-label" id="kill-label">Kill Phantom Power</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ═══ FOOTER ═══ -->
+    <footer class="app-footer">
+        <p>© 2026 Phantom Power Cost Estimator — Built for Hackathon Excellence | Data saved locally in your browser</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
